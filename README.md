@@ -14,27 +14,28 @@ It supports two main operations:
 *   **AI API Access**:
     *   **Gemini**: A valid Google Gemini API key.
     *   **Ollama**: A running Ollama server (local or remote). Auth tokens are supported if your Ollama instance is behind a proxy.
+*   **Network Access**: In corporate environments with egress filtering, the domains listed in the section below must be explicitly allowed in your firewall.
 
 ## Network Requirements (Firewall Allowlist)
 
-The tool makes outbound HTTPS (port 443) connections to the following domains. In corporate environments with egress filtering, these must be explicitly allowed.
+The tool makes outbound **HTTPS (port 443)** connections to the following domains. All entries below require TCP 443 outbound unless noted otherwise.
 
 ### Always Required
 
 | Domain | Purpose |
 |--------|---------|
 | Your FossID server | Read scan data & write results (user-specified) |
-| `api.github.com` | License & copyright lookup from GitHub repositories |
+| `github.com` | GitHub repository access (source URL destination) |
+| `api.github.com` | License & copyright lookup via GitHub REST API |
 
 ### Required by AI Tool (one of the following)
 
 | Domain | Condition |
 |--------|-----------|
-| `generativelanguage.googleapis.com` | `--aitool gemini` |
-| Your Ollama server | `--aitool ollama` (user-specified) |
-| _(none, local PowerShell call)_ | `--aitool gemini_cli` |
+| `generativelanguage.googleapis.com` | `--aitool gemini` or `--aitool gemini_cli` |
+| Your Ollama server | `--aitool ollama` (user-specified address) |
 
-### Required by Package Registry (only contacted if the scan contains that package type)
+### Required by Package Registry (contacted only when the scan contains that package type)
 
 | Domain | Registry | Package Managers |
 |--------|----------|-----------------|
@@ -51,7 +52,17 @@ The tool makes outbound HTTPS (port 443) connections to the following domains. I
 | `hackage.haskell.org` | Hackage | haskell |
 | `pub.dev` | Pub | dart, flutter |
 
+### Required at Build Time (Maven)
+
+These domains are only needed when building the JAR from source with `mvn clean package`. They are not contacted at runtime.
+
+| Domain | Purpose |
+|--------|---------|
+| `repo.maven.apache.org` | Download picocli and Gson build dependencies |
+
 > **Tip:** If your environment only uses a subset of package managers (e.g., Maven and NPM only), you only need to open the corresponding registry domains.
+>
+> **Tip:** If you use a pre-built JAR, the build-time domain (`repo.maven.apache.org`) is not required.
 
 ---
 
