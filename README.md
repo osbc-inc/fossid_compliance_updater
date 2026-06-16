@@ -1,4 +1,4 @@
-# FossID Dependency License/URL & Copyright Updater
+# FossID License/URL & Copyright Updater
 
 This Command Line Interface (CLI) tool interacts with the FossID API and AI models (Gemini or Ollama) to automatically fill in missing information for components in your FossID scans.
 
