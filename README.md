@@ -75,7 +75,7 @@ mvn clean package
 ```
 
 This will create an executable "fat" JAR file (which includes all necessary dependencies like `picocli` and `gson`) located at:
-`target/checkComplianceInfo.jar`
+`target/fossidComplianceUpdater.jar`
 
 ## Usage
 
@@ -158,7 +158,7 @@ Every execution automatically generates a log file in the current directory cont
 ### 1. Update License and URL using Gemini (Default mode)
 
 ```bash
-java -jar target/checkComplianceInfo.jar \
+java -jar target/fossidComplianceUpdater.jar \
   --address https://fossid.example.com/api.php \
   --username myuser \
   --apikey myAPIkey \
@@ -172,7 +172,7 @@ java -jar target/checkComplianceInfo.jar \
 ### 2. Update License and URL using Ollama
 
 ```bash
-java -jar target/checkComplianceInfo.jar \
+java -jar target/fossidComplianceUpdater.jar \
   --getinfo licenseUrl \
   --address https://fossid.example.com/api.php \
   --username myuser \
@@ -187,7 +187,7 @@ java -jar target/checkComplianceInfo.jar \
 ### 3. Update Copyright information using Gemini
 
 ```bash
-java -jar target/checkComplianceInfo.jar \
+java -jar target/fossidComplianceUpdater.jar \
   --getinfo copyright \
   --address https://fossid.example.com/api.php \
   --username myuser \
@@ -201,7 +201,7 @@ java -jar target/checkComplianceInfo.jar \
 ### 4. Update Copyright information using Ollama
 
 ```bash
-java -jar target/checkComplianceInfo.jar \
+java -jar target/fossidComplianceUpdater.jar \
   --getinfo copyright \
   --address https://fossid.example.com/api.php \
   --username myuser \
@@ -215,7 +215,7 @@ java -jar target/checkComplianceInfo.jar \
 ### 5. Update using local Gemini CLI function
 
 ```bash
-java -jar target/checkComplianceInfo.jar \
+java -jar target/fossidComplianceUpdater.jar \
   --getinfo copyright \
   --address https://fossid.example.com/api.php \
   --username myuser \
@@ -243,7 +243,7 @@ $env:FOSSID_API_KEY = "my-fossid-key"
 $env:GEMINI_TOKEN   = "my-gemini-key"
 $env:GITHUB_PAT     = "ghp_xxxx"
 
-java -jar target/checkComplianceInfo.jar `
+java -jar target/fossidComplianceUpdater.jar `
   --address https://fossid.example.com/api.php `
   --username myuser `
   --scancode my_scan_code_123 `
