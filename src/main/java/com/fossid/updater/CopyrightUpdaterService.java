@@ -1,21 +1,17 @@
 package com.fossid.updater;
 
-import java.util.List;
+import java.util.*;
 
-/**
- * Service that handles the --getinfo copyright workflow:
- *  1. From get_scan_identified_components (identified scan components)
- *  2. From get_dependency_analysis_results (dependency components)
- *  For each component, get_information is called to check if copyright is missing.
- *  If missing, queryCopyright is called on the AI client.
- *  If AI returns a copyright, updateComponentCopyright is called.
- */
 public class CopyrightUpdaterService {
 
     private final FossIdClient fossIdClient;
     private final AiClient aiClient;
     private final UrlLicenseFetcher urlLicenseFetcher;
     private final RegistryInfoFetcher registryInfoFetcher;
+
+    private final Map<String, RegistryInfoFetcher.RegistryResult> registryCache = new HashMap<>();
+    private final Map<String, String> urlCopyrightCache = new HashMap<>();
+    private final Map<String, AiResult> aiCopyrightCache = new HashMap<>();
 
     public CopyrightUpdaterService(FossIdClient fossIdClient, AiClient aiClient, String githubPat) {
         this.fossIdClient = fossIdClient;
@@ -46,7 +42,7 @@ public class CopyrightUpdaterService {
             for (int i = 0; i < identified.size(); i++) {
                 IdentifiedComponent comp = identified.get(i);
                 String idx = String.format("[%d/%d]", i + 1, identified.size());
-                if (isBlankOrNull(comp.name) || isBlankOrNull(comp.version)) {
+                if (ComponentUtils.isBlankOrNA(comp.name) || ComponentUtils.isBlankOrNA(comp.version)) {
                     System.out.printf("%s SKIP  (name or version is empty)%n", idx);
                     totalSkipped++;
                     continue;
@@ -54,7 +50,7 @@ public class CopyrightUpdaterService {
                 int[] counts = processComponentCopyright(
                         idx, comp.name, comp.version,
                         comp.url, comp.licenseIdentifier, comp.licenseName,
-                        null /* no package manager in identified scan */
+                        null
                 );
                 totalUpdated += counts[0];
                 totalSkipped += counts[1];
@@ -77,15 +73,15 @@ public class CopyrightUpdaterService {
             for (int i = 0; i < deps.size(); i++) {
                 DependencyComponent comp = deps.get(i);
                 String idx = String.format("[%d/%d]", i + 1, deps.size());
-                if (isBlankOrNull(comp.name) || isBlankOrNull(comp.version)) {
+                if (ComponentUtils.isBlankOrNA(comp.name) || ComponentUtils.isBlankOrNA(comp.version)) {
                     System.out.printf("%s SKIP  (name or version is empty)%n", idx);
                     totalSkipped++;
                     continue;
                 }
-                String packageManager = extractPackageManager(comp.detailedDependencyInfo);
+                String packageManager = ComponentUtils.extractPackageManager(comp.detailedDependencyInfo);
                 int[] counts = processComponentCopyright(
                         idx, comp.name, comp.version,
-                        comp.url, comp.licenseIdentifier, null /* no license_name in dep */,
+                        comp.url, comp.licenseIdentifier, null,
                         packageManager
                 );
                 totalUpdated += counts[0];
@@ -106,15 +102,9 @@ public class CopyrightUpdaterService {
         System.out.println("==========================================================");
     }
 
-    /**
-     * For a single component: calls get_information, checks copyright, queries AI if needed,
-     * then updates via FossID API.
-     * @return int[3] = {updated, skipped, error}
-     */
     private int[] processComponentCopyright(String idx, String name, String version,
                                             String url, String licenseIdentifier, String licenseName,
                                             String packageManager) {
-        // Step 1: get detailed component info including current copyright
         ComponentInfo info;
         try {
             info = fossIdClient.getComponentInformation(name, version);
@@ -128,8 +118,7 @@ public class CopyrightUpdaterService {
             return new int[]{0, 1, 0};
         }
 
-        // Step 2: if copyright is already populated, skip
-        if (!isBlankOrNull(info.copyright)) {
+        if (!ComponentUtils.isBlankOrNA(info.copyright)) {
             System.out.printf("%s SKIP  %-40s %-12s copyright already set%n", idx, name, version);
             return new int[]{0, 1, 0};
         }
@@ -138,11 +127,11 @@ public class CopyrightUpdaterService {
 
         String copyright = null;
         String sourceStr = "N/A";
-        String refUrl = "N/A";
+        String refUrl    = "N/A";
 
-        // Step 3: Try URL-based direct fetch first (GitHub API)
-        if (!isBlankOrNull(url)) {
-            copyright = urlLicenseFetcher.fetchCopyright(url);
+        // Step 1: GitHub API from existing URL
+        if (!ComponentUtils.isBlankOrNA(url)) {
+            copyright = fetchCopyrightWithCache(url);
             if (copyright != null) {
                 sourceStr = "GitHub API";
                 refUrl = url;
@@ -150,22 +139,19 @@ public class CopyrightUpdaterService {
             }
         }
 
-        // Step 4: Try Registry API (if package manager is known)
-        if (copyright == null && !isBlankOrNull(packageManager)) {
-            RegistryInfoFetcher.RegistryResult regResult = registryInfoFetcher.fetchInfo(packageManager, name, version);
+        // Step 2: Registry API
+        if (copyright == null && !ComponentUtils.isBlankOrNA(packageManager)) {
+            RegistryInfoFetcher.RegistryResult regResult = fetchRegistryWithCache(packageManager, name, version);
             if (regResult != null) {
-                // If registry returned a URL, try fetching copyright from it if it's GitHub
-                if (!isBlankOrNull(regResult.url)) {
-                    copyright = urlLicenseFetcher.fetchCopyright(regResult.url);
+                if (!ComponentUtils.isBlankOrNA(regResult.url)) {
+                    copyright = fetchCopyrightWithCache(regResult.url);
                     if (copyright != null) {
                         sourceStr = regResult.source + " -> GitHub API";
                         refUrl = regResult.url;
                         System.out.printf("       [REGISTRY] Registry URL(%s)에서 Copyright 조회 성공 (GitHub API): %s%n", regResult.source, copyright);
                     }
                 }
-                
-                // If still no copyright, try the copyright field from registry metadata
-                if (copyright == null && !isBlankOrNull(regResult.copyright)) {
+                if (copyright == null && !ComponentUtils.isBlankOrNA(regResult.copyright)) {
                     copyright = regResult.copyright;
                     sourceStr = regResult.source;
                     refUrl = regResult.referenceUrl;
@@ -174,20 +160,19 @@ public class CopyrightUpdaterService {
             }
         }
 
-        // Step 5: If URL/Registry fetch fails, query AI
+        // Step 3: AI query
         if (copyright == null) {
             System.out.println("       [AI] URL/Registry 조회 실패 → AI에게 대체 URL 및 Copyright 추정 요청");
             AiResult result;
             try {
-                result = aiClient.queryCopyright(name, version, url, licenseIdentifier, licenseName, packageManager);
+                result = fetchAiCopyrightWithCache(name, version, url, licenseIdentifier, licenseName, packageManager);
             } catch (Exception e) {
                 System.err.printf("       [ERROR] AI copyright query failed: %s%n", e.getMessage());
                 return new int[]{0, 0, 1};
             }
 
-            // Step 5a: If AI suggested a URL, try to fetch copyright from that URL via GitHub API
-            if (!isBlankOrNull(result.url)) {
-                String aiUrlCopyright = urlLicenseFetcher.fetchCopyright(result.url);
+            if (!ComponentUtils.isBlankOrNA(result.url)) {
+                String aiUrlCopyright = fetchCopyrightWithCache(result.url);
                 if (aiUrlCopyright != null) {
                     copyright = aiUrlCopyright;
                     sourceStr = "AI Suggested URL -> GitHub API";
@@ -196,24 +181,22 @@ public class CopyrightUpdaterService {
                 }
             }
 
-            // Step 5b: If still no copyright, fall back to AI's guessed copyright
-            if (copyright == null && !isBlankOrNull(result.copyright)) {
+            if (copyright == null && !ComponentUtils.isBlankOrNA(result.copyright)) {
                 copyright = result.copyright;
                 sourceStr = aiClient.getAiName();
-                refUrl = !isBlankOrNull(result.url) ? result.url : "Estimated";
+                refUrl = !ComponentUtils.isBlankOrNA(result.url) ? result.url : "Estimated";
                 System.out.printf("       [AI] AI 추정 Copyright 사용: %s (Ref: %s)%n", copyright, refUrl);
             }
         }
 
-        if (isBlankOrNull(copyright)) {
+        if (ComponentUtils.isBlankOrNA(copyright)) {
             System.out.println("       AI could not determine copyright. Skipping update.");
             return new int[]{0, 1, 0};
         }
 
         System.out.printf("       변경전: %s, %s, copyright=%s%n", name, version,
-                isBlankOrNull(info.copyright) ? "N/A" : info.copyright);
+                ComponentUtils.isBlankOrNA(info.copyright) ? "N/A" : info.copyright);
 
-        // Step 6: update copyright
         try {
             fossIdClient.updateComponentCopyright(name, version, copyright);
             System.out.printf("       변경후: %s, %s, copyright=%s%n", name, version, copyright);
@@ -225,31 +208,28 @@ public class CopyrightUpdaterService {
         }
     }
 
-
-    private boolean isBlankOrNull(String value) {
-        if (value == null) return true;
-        String trimmed = value.trim();
-        return trimmed.isEmpty() || "null".equalsIgnoreCase(trimmed) || "N/A".equalsIgnoreCase(trimmed);
+    private String fetchCopyrightWithCache(String url) {
+        if (urlCopyrightCache.containsKey(url)) return urlCopyrightCache.get(url);
+        String copyright = urlLicenseFetcher.fetchCopyright(url);
+        urlCopyrightCache.put(url, copyright);
+        return copyright;
     }
 
-    private String extractPackageManager(String detailedDependencyInfo) {
-        if (isBlankOrNull(detailedDependencyInfo)) return null;
-        try {
-            com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(detailedDependencyInfo).getAsJsonObject();
-            for (java.util.Map.Entry<String, com.google.gson.JsonElement> entry : obj.entrySet()) {
-                com.google.gson.JsonElement val = entry.getValue();
-                if (val.isJsonObject()) {
-                    com.google.gson.JsonObject inner = val.getAsJsonObject();
-                    if (inner.has("project_id")) {
-                        String projectId = inner.get("project_id").getAsString();
-                        int colonIdx = projectId.indexOf(':');
-                        return colonIdx > 0 ? projectId.substring(0, colonIdx) : projectId;
-                    }
-                }
-            }
-        } catch (Exception e) {
-            // ignore
-        }
-        return null;
+    private RegistryInfoFetcher.RegistryResult fetchRegistryWithCache(String packageManager, String name, String version) {
+        String key = packageManager + ":" + name + ":" + version;
+        if (registryCache.containsKey(key)) return registryCache.get(key);
+        RegistryInfoFetcher.RegistryResult result = registryInfoFetcher.fetchInfo(packageManager, name, version);
+        registryCache.put(key, result);
+        return result;
+    }
+
+    private AiResult fetchAiCopyrightWithCache(String name, String version, String url,
+                                                String licenseIdentifier, String licenseName,
+                                                String packageManager) throws Exception {
+        String key = name + ":" + version;
+        if (aiCopyrightCache.containsKey(key)) return aiCopyrightCache.get(key);
+        AiResult result = aiClient.queryCopyright(name, version, url, licenseIdentifier, licenseName, packageManager);
+        aiCopyrightCache.put(key, result);
+        return result;
     }
 }

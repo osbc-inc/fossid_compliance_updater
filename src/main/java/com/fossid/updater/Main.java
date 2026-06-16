@@ -9,7 +9,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.concurrent.Callable;
 
 @Command(
-    name = "checkComplianceInfo",
+    name = "fossidComplianceUpdater",
     mixinStandardHelpOptions = true,
     version = "1.1.0",
     description = {

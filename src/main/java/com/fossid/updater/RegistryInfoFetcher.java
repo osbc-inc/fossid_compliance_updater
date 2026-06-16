@@ -391,11 +391,10 @@ public class RegistryInfoFetcher {
             JsonObject data = callApi(url);
             if (data == null || !data.has("packages")) return null;
             
-            JsonObject pkgData = data.getAsJsonObject("packages").getAsJsonObject(name);
-            if (pkgData == null) return null;
-            
-            // Packagist returns an array of versions
-            JsonArray versions = pkgData.getAsJsonArray();
+            JsonElement pkgElement = data.getAsJsonObject("packages").get(name);
+            if (pkgElement == null || !pkgElement.isJsonArray()) return null;
+
+            JsonArray versions = pkgElement.getAsJsonArray();
             JsonObject targetVersion = null;
             for (JsonElement v : versions) {
                 JsonObject vo = v.getAsJsonObject();
